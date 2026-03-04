@@ -1,0 +1,782 @@
+openapi: "3.0.3"
+info:
+  title: Printing Press Manager API
+  version: "1.0.0"
+  description: |
+    Backend server for a kiosk-based printing press system.
+    Manages kiosks, documents, jobs, payments, and print commands.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              nullable: true
+            requestId:
+              type: string
+              nullable: true
+
+    TokenResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: string
+        tokenType:
+          type: string
+
+    Kiosk:
+      type: object
+      properties:
+        id:
+          type: string
+        ownerId:
+          type: string
+        name:
+          type: string
+        location:
+          type: string
+          nullable: true
+        printerModel:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [online, offline, busy, error]
+        ink:
+          type: object
+          properties:
+            cyan:
+              type: integer
+            magenta:
+              type: integer
+            yellow:
+              type: integer
+            black:
+              type: integer
+        paperCount:
+          type: integer
+        lastHeartbeat:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    KioskStatus:
+      type: object
+      properties:
+        kioskId:
+          type: string
+        status:
+          type: string
+        ink:
+          type: object
+        paperCount:
+          type: integer
+        lastHeartbeat:
+          type: string
+          format: date-time
+          nullable: true
+
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+        kioskId:
+          type: string
+        userPhone:
+          type: string
+          nullable: true
+        fileUrl:
+          type: string
+        fileName:
+          type: string
+        pageCount:
+          type: integer
+        checksum:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    Pricing:
+      type: object
+      properties:
+        currency:
+          type: string
+        unitPagePrice:
+          type: number
+        subTotal:
+          type: number
+        gstPercent:
+          type: number
+        gstAmount:
+          type: number
+        total:
+          type: number
+
+    Job:
+      type: object
+      properties:
+        id:
+          type: string
+        documentId:
+          type: string
+        kioskId:
+          type: string
+        copies:
+          type: integer
+        colorMode:
+          type: string
+          enum: [bw, color]
+        pricing:
+          $ref: "#/components/schemas/Pricing"
+        status:
+          type: string
+          enum: [pending_payment, ready_to_print, printing, completed, failed]
+        paymentId:
+          type: string
+          nullable: true
+        claimedBy:
+          type: string
+          nullable: true
+        claimedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        failureReason:
+          type: string
+          nullable: true
+        idempotencyKey:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        amount:
+          type: number
+        currency:
+          type: string
+        provider:
+          type: string
+        status:
+          type: string
+          enum: [pending, paid, failed]
+        paymentLink:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        paidAt:
+          type: string
+          format: date-time
+          nullable: true
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  time:
+                    type: string
+
+  /auth/login:
+    post:
+      summary: Login with username/password
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: Refreshed tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/logout:
+    post:
+      summary: Logout and revoke refresh token
+      tags: [Auth]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /kiosks:
+    get:
+      summary: List kiosks for logged-in user
+      tags: [Kiosks]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of kiosks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kiosks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Kiosk"
+    post:
+      summary: Register a new kiosk/printer
+      tags: [Kiosks]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                location:
+                  type: string
+                printerModel:
+                  type: string
+      responses:
+        "201":
+          description: Kiosk registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Kiosk"
+
+  /kiosks/{kioskId}:
+    get:
+      summary: Get single kiosk details
+      tags: [Kiosks]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: kioskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Kiosk details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Kiosk"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /kiosks/{kioskId}/status:
+    get:
+      summary: Get kiosk online/offline status, ink, paper
+      tags: [Kiosks]
+      parameters:
+        - name: kioskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Status info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KioskStatus"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /kiosks/{kioskId}/heartbeat:
+    post:
+      summary: Kiosk sends heartbeat with consumable levels
+      tags: [Kiosks]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: kioskId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [online, busy, error]
+                ink:
+                  type: object
+                  properties:
+                    cyan:
+                      type: integer
+                    magenta:
+                      type: integer
+                    yellow:
+                      type: integer
+                    black:
+                      type: integer
+                paperCount:
+                  type: integer
+      responses:
+        "200":
+          description: Heartbeat acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ack:
+                    type: boolean
+                  serverTime:
+                    type: string
+                    format: date-time
+
+  /documents:
+    post:
+      summary: Upload document metadata (chatbot sends this)
+      tags: [Documents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kioskId, fileUrl, pageCount]
+              properties:
+                kioskId:
+                  type: string
+                userPhone:
+                  type: string
+                fileUrl:
+                  type: string
+                  description: URL where document can be downloaded
+                fileName:
+                  type: string
+                pageCount:
+                  type: integer
+                checksum:
+                  type: string
+                  description: SHA-256 or MD5 checksum of file
+      responses:
+        "201":
+          description: Document stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+
+  /documents/{docId}:
+    get:
+      summary: Get document metadata
+      tags: [Documents]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /jobs:
+    get:
+      summary: List jobs (optionally filter by kioskId, status)
+      tags: [Jobs]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: kioskId
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending_payment, ready_to_print, printing, completed, failed]
+      responses:
+        "200":
+          description: Jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Job"
+    post:
+      summary: Create a print job and get pricing options
+      tags: [Jobs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [documentId]
+              properties:
+                documentId:
+                  type: string
+                copies:
+                  type: integer
+                  default: 1
+                colorMode:
+                  type: string
+                  enum: [bw, color]
+                  default: bw
+      responses:
+        "201":
+          description: Job created with pricing
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job:
+                    $ref: "#/components/schemas/Job"
+                  printOptions:
+                    type: object
+                    properties:
+                      copies:
+                        type: integer
+                      colorMode:
+                        type: string
+                      bwPriceOption:
+                        $ref: "#/components/schemas/Pricing"
+                      colorPriceOption:
+                        $ref: "#/components/schemas/Pricing"
+
+  /jobs/{jobId}:
+    get:
+      summary: Get job details
+      tags: [Jobs]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /jobs/{jobId}/claim:
+    post:
+      summary: Kiosk claims a job for printing (idempotent)
+      tags: [Jobs]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                idempotencyKey:
+                  type: string
+                  description: Unique key to ensure same claim is not processed twice
+      responses:
+        "200":
+          description: Job claimed, document info returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job:
+                    $ref: "#/components/schemas/Job"
+                  document:
+                    type: object
+                    properties:
+                      fileUrl:
+                        type: string
+                      fileName:
+                        type: string
+                      checksum:
+                        type: string
+                      pageCount:
+                        type: integer
+        "409":
+          description: Job not ready or already claimed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /jobs/{jobId}/complete:
+    post:
+      summary: Kiosk reports job completion (success or failure)
+      tags: [Jobs]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [success]
+              properties:
+                success:
+                  type: boolean
+                failureReason:
+                  type: string
+                consumables:
+                  type: object
+                  description: Updated ink/paper levels after print
+                  properties:
+                    ink:
+                      type: object
+                    paperCount:
+                      type: integer
+      responses:
+        "200":
+          description: Completion recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job:
+                    $ref: "#/components/schemas/Job"
+
+  /payments:
+    post:
+      summary: Generate a payment link for a job
+      tags: [Payments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jobId]
+              properties:
+                jobId:
+                  type: string
+                provider:
+                  type: string
+                  description: Payment provider (razorpay, stripe, etc.)
+      responses:
+        "201":
+          description: Payment link created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  paymentId:
+                    type: string
+                  paymentLink:
+                    type: string
+                  amount:
+                    type: number
+                  currency:
+                    type: string
+
+  /payments/{paymentId}:
+    get:
+      summary: Get payment status
+      tags: [Payments]
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Payment details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+
+  /payments/{paymentId}/webhook:
+    post:
+      summary: Payment gateway webhook callback
+      tags: [Payments]
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [success, failed]
+      responses:
+        "200":
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+                  paymentStatus:
+                    type: string

@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: printing-press-api
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ACCESS_TOKEN_TTL
+        value: 15m
+      - key: REFRESH_TOKEN_TTL
+        value: 7d
+      - key: DB_HOST
+        fromDatabase:
+          name: printing-press-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: printing-press-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: printing-press-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: printing-press-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: printing-press-db
+          property: password
+      - key: BW_PER_PAGE
+        value: 2
+      - key: COLOR_PER_PAGE
+        value: 8
+      - key: GST_PERCENT
+        value: 18
+    healthCheckPath: /health
+
+databases:
+  - name: printing-press-db
+    plan: free
+    databaseName: printing_press
+    user: printing_user
