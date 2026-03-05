@@ -11,6 +11,7 @@ const { config } = require("./config");
 const { errorHandler } = require("./utils/errors");
 const { initializeDb } = require("./db");
 const { createWebSocketServer, getConnectedKiosks } = require("./ws");
+const { startBot } = require("./bot/telegram");
 
 const authRoutes = require("./routes/auth");
 const kioskRoutes = require("./routes/kiosks");
@@ -73,6 +74,9 @@ async function start() {
       console.log(`Printing Press Server listening on http://localhost:${config.port}`);
       console.log(`OpenAPI docs at http://localhost:${config.port}/docs`);
       console.log(`WebSocket endpoint at ws://localhost:${config.port}/ws`);
+
+      // Start Telegram bot (non-blocking; disabled if no token set)
+      startBot();
     });
   } catch (err) {
     console.error("Failed to start server:", err);
